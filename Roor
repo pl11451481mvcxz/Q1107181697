@@ -1,0 +1,784 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local player = Players.LocalPlayer
+
+local Window = Rayfield:CreateWindow({
+    Name = "监狱人生 | V1.10",
+    LoadingTitle = "加载中...",
+    LoadingSubtitle = "…",
+    ConfigurationSaving = { Enabled = false },
+    Discord = { Enabled = false, Invite = "", RememberJoins = true },
+    KeySystem = false,
+})
+
+local MainTab     = Window:CreateTab("删除", "door-open")
+local MoveTab     = Window:CreateTab("玩家", "move")
+local CombatTab   = Window:CreateTab("神秘", "crosshair")
+local ESPTab      = Window:CreateTab("ESP透视", "eye")
+local SettingsTab = Window:CreateTab("设置", "settings")
+local Targets = {
+    { Name = "删除牢房门", Path = "CellDoors" },
+    { Name = "门", Path = "Doors" },
+    { Name = "删除监狱外墙", Path = "Prison_OuterWall" },
+    { Name = "删除监狱围栏", Path = "Prison_Fences" },
+}
+
+local DeletedObjects = {}
+
+for _, target in ipairs(Targets) do
+    MainTab:CreateToggle({
+        Name = target.Name,
+        CurrentValue = false,
+        Flag = "Delete_" .. target.Path,
+        Callback = function(state)
+            if state then
+                local obj = Workspace:FindFirstChild(target.Path)
+                if obj then
+                    if not DeletedObjects[target.Path] then
+                        DeletedObjects[target.Path] = obj
+                    end
+                    obj.Parent = nil
+                    Rayfield:Notify({
+                        Title = "已删除",
+                        Content = target.Name,
+                        Duration = 2,
+                    })
+                else
+                    Rayfield:Notify({
+                        Title = "找不到",
+                        Content = target.Name,
+                        Duration = 2,
+                    })
+                end
+            else
+                local obj = DeletedObjects[target.Path]
+                if obj then
+                    obj.Parent = Workspace
+                    DeletedObjects[target.Path] = nil
+                    Rayfield:Notify({
+                        Title = "已恢复",
+                        Content = target.Name,
+                        Duration = 2,
+                    })
+                end
+            end
+        end,
+    })
+end
+
+local SpeedEnabled = false
+local SpeedValue = 16
+local OriginalWalkSpeed = 16
+
+MoveTab:CreateInput({
+    Name = "速度值（输入数字）",
+    CurrentValue = "16",
+    PlaceholderText = "16",
+    RemoveTextAfterFocusLost = false,
+    Flag = "SpeedValueInput",
+    Callback = function(text)
+        local num = tonumber(text)
+        if num then
+            SpeedValue = num
+            local char = player.Character
+            if char and char:FindFirstChild("Humanoid") and SpeedEnabled then
+                char.Humanoid.WalkSpeed = num
+            end
+        end
+    end,
+})
+
+MoveTab:CreateToggle({
+    Name = "开启速度",
+    CurrentValue = false,
+    Flag = "SpeedEnabled",
+    Callback = function(state)
+        SpeedEnabled = state
+        local char = player.Character
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.WalkSpeed = state and SpeedValue or OriginalWalkSpeed
+        end
+    end,
+})
+local JumpEnabled = false
+local JumpValue = 50
+local OriginalJumpPower = 50
+
+local FlyEnabled = false
+local FlySpeed = 100
+
+local mt = getrawmetatable(game)
+setreadonly(mt, false)
+local oldNamecall = mt.__namecall
+mt.__namecall = newcclosure(function(self, ...)
+    if getnamecallmethod() == "FireServer" and tostring(self) == "ForceSelfDamage" then
+        return nil
+    end
+    return oldNamecall(self, ...)
+end)
+setreadonly(mt, true)
+
+local ctrl
+pcall(function()
+    ctrl = require(player.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
+end)
+
+MoveTab:CreateSlider({
+    Name = "飞行速度",
+    Range = {10, 500},
+    Increment = 5,
+    Suffix = " studs/s",
+    CurrentValue = 100,
+    Flag = "FlySpeed",
+    Callback = function(v)
+        FlySpeed = v
+        getgenv().FlySpeed = v
+    end,
+})
+
+MoveTab:CreateToggle({
+    Name = "飞行",
+    CurrentValue = false,
+    Flag = "FlyToggle",
+    Callback = function(state)
+        FlyEnabled = state
+        getgenv().FlyEnabled = state
+        getgenv().FlySpeed = FlySpeed
+
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChild("Humanoid")
+        if not hrp or not hum then return end
+
+        if state then
+            getgenv().FlyLoop = true
+
+            local anim = char:FindFirstChild("Animate")
+            if anim then anim.Parent = nil end
+
+            local bv = Instance.new("BodyVelocity")
+            bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+            bv.Parent = hrp
+
+            local bg = Instance.new("BodyGyro")
+            bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+            bg.P = 8000
+            bg.Parent = hrp
+
+            getgenv().FlyBV = bv
+            getgenv().FlyBG = bg
+            getgenv().FlyAnim = anim
+
+            task.spawn(function()
+                while getgenv().FlyEnabled and getgenv().FlyLoop and char.Parent do
+                    local speed = getgenv().FlySpeed or 100
+                    local mv = ctrl and ctrl:GetMoveVector() or Vector3.zero
+                    local cam = workspace.CurrentCamera
+
+                    local dir = (cam.CFrame.LookVector * -mv.Z) + (cam.CFrame.RightVector * mv.X)
+                    if mv.Magnitude > 0 then
+                        bv.Velocity = dir.Unit * speed
+                        bg.CFrame = CFrame.new(Vector3.zero, Vector3.new(dir.X, 0, dir.Z))
+                    else
+                        bv.Velocity = Vector3.new(0, 0.1, 0)
+                        bg.CFrame = CFrame.new(Vector3.zero, Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z))
+                    end
+
+                    hum:ChangeState(Enum.HumanoidStateType.Physics)
+                    RunService.RenderStepped:Wait()
+                end
+
+                if getgenv().FlyBV then getgenv().FlyBV:Destroy() getgenv().FlyBV = nil end
+                if getgenv().FlyBG then getgenv().FlyBG:Destroy() getgenv().FlyBG = nil end
+                if getgenv().FlyAnim then getgenv().FlyAnim.Parent = char getgenv().FlyAnim = nil end
+            end)
+
+            Rayfield:Notify({
+                Title = "飞行开启",
+                Content = "🤔",
+                Duration = 2,
+            })
+        else
+            getgenv().FlyLoop = false
+            task.wait(0.1)
+
+            if getgenv().FlyBV then
+                getgenv().FlyBV:Destroy()
+                getgenv().FlyBV = nil
+            end
+            if getgenv().FlyBG then
+                getgenv().FlyBG:Destroy()
+                getgenv().FlyBG = nil
+            end
+
+            if getgenv().FlyAnim and char then
+                getgenv().FlyAnim.Parent = char
+                getgenv().FlyAnim = nil
+            end
+
+            if hum then
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+                hum.PlatformStand = false
+                hum.Sit = false
+            end
+
+            if hrp then
+                hrp.Velocity = Vector3.zero
+                hrp.RotVelocity = Vector3.zero
+            end
+
+            Rayfield:Notify({
+                Title = "飞行关闭",
+                Content = "已恢复",
+                Duration = 2,
+            })
+        end
+    end,
+})
+MoveTab:CreateInput({
+    Name = "跳跃值（输入数字）",
+    CurrentValue = "50",
+    PlaceholderText = "50",
+    RemoveTextAfterFocusLost = false,
+    Flag = "JumpValueInput",
+    Callback = function(text)
+        local num = tonumber(text)
+        if num then
+            JumpValue = num
+            local char = player.Character
+            if char and char:FindFirstChild("Humanoid") and JumpEnabled then
+                char.Humanoid.UseJumpPower = true
+                char.Humanoid.JumpPower = num
+            end
+        end
+    end,
+})
+MoveTab:CreateToggle({
+    Name = "开启跳跃高度",
+    CurrentValue = false,
+    Flag = "JumpEnabled",
+    Callback = function(state)
+        JumpEnabled = state
+        local char = player.Character
+        if char and char:FindFirstChild("Humanoid") then
+            if state then
+                char.Humanoid.UseJumpPower = true
+                char.Humanoid.JumpPower = JumpValue
+            else
+                char.Humanoid.JumpPower = OriginalJumpPower
+            end
+        end
+    end,
+})
+local InfiniteJump = false
+MoveTab:CreateToggle({
+    Name = "无限跳",
+    CurrentValue = false,
+    Flag = "InfiniteJump",
+    Callback = function(state) InfiniteJump = state end,
+})
+UserInputService.JumpRequest:Connect(function()
+    if InfiniteJump then
+        local char = player.Character
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+local InvisibleEnabled = false
+local character, humanoid, rootPart
+local characterParts = {}
+
+local function setupCharacter()
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    rootPart = character:WaitForChild("HumanoidRootPart")
+    characterParts = {}
+
+    for _, part in pairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part.Transparency == 0 then
+            table.insert(characterParts, part)
+        end
+    end
+end
+
+setupCharacter()
+
+player.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    setupCharacter()
+    if InvisibleEnabled then
+        task.wait(0.3)
+        for _, part in pairs(characterParts) do
+            if part and part.Parent then
+                part.Transparency = 0.5
+            end
+        end
+    end
+end)
+
+local function setTransparency(state)
+    for _, part in pairs(characterParts) do
+        if part and part.Parent then
+            part.Transparency = state and 0.5 or 0
+        end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not InvisibleEnabled then return end
+    if not rootPart or not humanoid or not rootPart.Parent then return end
+
+    local oldCFrame = rootPart.CFrame
+    local oldCameraOffset = humanoid.CameraOffset
+    local targetCFrame = oldCFrame * CFrame.new(0, -75, 0)
+    local offset = targetCFrame:ToObjectSpace(CFrame.new(oldCFrame.Position)).Position
+
+    rootPart.CFrame = targetCFrame
+    humanoid.CameraOffset = offset
+    RunService.RenderStepped:Wait()
+    rootPart.CFrame = oldCFrame
+    humanoid.CameraOffset = oldCameraOffset
+end)
+
+MoveTab:CreateToggle({
+    Name = "隐身",
+    CurrentValue = false,
+    Flag = "InvisibleToggle",
+    Callback = function(state)
+        InvisibleEnabled = state
+        setTransparency(state)
+
+        if state then
+            Rayfield:Notify({
+                Title = "隐身开启",
+                Content = "隐身",
+                Duration = 2,
+            })
+        else
+            Rayfield:Notify({
+                Title = "隐身关闭",
+                Content = "角色已恢复",
+                Duration = 2,
+            })
+        end
+    end,
+})
+local AutoAttack = false
+local AutoAttackRange = 10
+
+CombatTab:CreateSlider({
+    Name = "攻击范围",
+    Range = {3, 50},
+    Increment = 1,
+    Suffix = " studs",
+    CurrentValue = 10,
+    Flag = "AutoAttackRange",
+    Callback = function(v) AutoAttackRange = v end,
+})
+
+CombatTab:CreateToggle({
+    Name = "靠近自动攻击",
+    CurrentValue = false,
+    Flag = "AutoAttack",
+    Callback = function(state) AutoAttack = state end,
+})
+
+local function GetClosestTarget(maxDist)
+    local myChar = player.Character
+    if not myChar then return nil end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+
+    local closest, closestDist = nil, maxDist
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local root = p.Character:FindFirstChild("HumanoidRootPart")
+            local hum = p.Character:FindFirstChild("Humanoid")
+            if root and hum and hum.Health > 0 then
+                local d = (myRoot.Position - root.Position).Magnitude
+                if d < closestDist then
+                    closestDist = d
+                    closest = p
+                end
+            end
+        end
+    end
+    return closest
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if AutoAttack then
+            local target = GetClosestTarget(AutoAttackRange)
+            if target then
+                local meleeEvent = game:GetService("ReplicatedStorage"):FindFirstChild("meleeEvent")
+                if meleeEvent then
+                    pcall(function()
+                        meleeEvent:FireServer(target, 1, 1)
+                    end)
+                end
+            end
+        end
+    end
+end)
+local Aimbot = false
+local AimbotTarget = "全部"
+local AimbotFOV = 200
+local AimbotSmooth = 0.15
+
+CombatTab:CreateDropdown({
+    Name = "自瞄目标",
+    Options = {"全部", "囚犯", "警察", "逃出者"},
+    CurrentOption = {"全部"},
+    Flag = "AimbotTarget",
+    Callback = function(option)
+        if type(option) == "table" then option = option[1] end
+        AimbotTarget = option
+    end,
+})
+
+CombatTab:CreateSlider({
+    Name = "FOV",
+    Range = {50, 600},
+    Increment = 10,
+    Suffix = " px",
+    CurrentValue = 200,
+    Flag = "AimbotFOV",
+    Callback = function(v) AimbotFOV = v end,
+})
+
+CombatTab:CreateSlider({
+    Name = "平滑度",
+    Range = {1, 100},
+    Increment = 1,
+    Suffix = "%",
+    CurrentValue = 15,
+    Flag = "AimbotSmooth",
+    Callback = function(v) AimbotSmooth = v / 100 end,
+})
+
+CombatTab:CreateToggle({
+    Name = "开启自瞄",
+    CurrentValue = false,
+    Flag = "Aimbot",
+    Callback = function(state) Aimbot = state end,
+})
+
+local function IsTeamMatch(p, target)
+    if not p.Team then return false end
+    local t = p.Team.Name:lower()
+    if target == "全部" then return true end
+    if target == "囚犯" then
+        return t:find("criminal") or t:find("囚犯")
+    elseif target == "警察" then
+        return t:find("guard") or t:find("police") or t:find("警察")
+    elseif target == "逃出者" then
+        return t:find("escape") or t:find("逃")
+    end
+    return false
+end
+
+local function GetAimbotTarget()
+    local myChar = player.Character
+    if not myChar then return nil end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local best, bestDist = nil, AimbotFOV
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character and IsTeamMatch(p, AimbotTarget) then
+            local head = p.Character:FindFirstChild("Head")
+            local hum = p.Character:FindFirstChild("Humanoid")
+            if head and hum and hum.Health > 0 then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+                if onScreen then
+                    local d = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                    if d < bestDist then
+                        bestDist = d
+                        best = head
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+RunService.RenderStepped:Connect(function()
+    if not Aimbot then return end
+    local target = GetAimbotTarget()
+    if not target then return end
+    local dir = (target.Position - Camera.CFrame.Position).Unit
+    Camera.CFrame = CFrame.new(Camera.CFrame.Position, Camera.CFrame.Position + dir)
+end)
+local ESPEnabled = false
+local ESPTeam = "全部"
+local ESPBox = true
+local ESPName = true
+local ESPDistance = true
+local ESPHealth = false
+local ESPHighlight = false
+local ESPSkeleton = false
+local ESPMaxDist = 500
+local ESPIgnoreTeam = false
+
+ESPTab:CreateDropdown({
+    Name = "透视目标",
+    Options = {"全部", "囚犯", "警察", "逃出者"},
+    CurrentOption = {"全部"},
+    Flag = "ESPTeam",
+    Callback = function(option)
+        if type(option) == "table" then option = option[1] end
+        ESPTeam = option
+    end,
+})
+
+ESPTab:CreateToggle({ Name = "方框", CurrentValue = true, Flag = "ESPBox", Callback = function(v) ESPBox = v end })
+ESPTab:CreateToggle({ Name = "名字", CurrentValue = true, Flag = "ESPName", Callback = function(v) ESPName = v end })
+ESPTab:CreateToggle({ Name = "距离", CurrentValue = true, Flag = "ESPDistance", Callback = function(v) ESPDistance = v end })
+ESPTab:CreateToggle({ Name = "血条", CurrentValue = false, Flag = "ESPHealth", Callback = function(v) ESPHealth = v end })
+ESPTab:CreateToggle({ Name = "高亮", CurrentValue = false, Flag = "ESPHighlight", Callback = function(v) ESPHighlight = v end })
+ESPTab:CreateToggle({ Name = "骨骼", CurrentValue = false, Flag = "ESPSkeleton", Callback = function(v) ESPSkeleton = v end })
+ESPTab:CreateToggle({ Name = "忽略同队", CurrentValue = false, Flag = "ESPIgnoreTeam", Callback = function(v) ESPIgnoreTeam = v end })
+
+ESPTab:CreateSlider({
+    Name = "最大距离",
+    Range = {50, 2000},
+    Increment = 50,
+    Suffix = " studs",
+    CurrentValue = 500,
+    Flag = "ESPMaxDist",
+    Callback = function(v) ESPMaxDist = v end,
+})
+
+ESPTab:CreateToggle({
+    Name = "开启 ESP",
+    CurrentValue = false,
+    Flag = "ESPEnabled",
+    Callback = function(state) ESPEnabled = state end,
+})
+
+local function IsTeamMatchESP(p)
+    if ESPIgnoreTeam and p.Team and player.Team and p.Team == player.Team then
+        return false
+    end
+    if ESPTeam == "全部" then return true end
+    if not p.Team then return false end
+    local t = p.Team.Name:lower()
+    if ESPTeam == "囚犯" then
+        return t:find("criminal") or t:find("囚犯")
+    elseif ESPTeam == "警察" then
+        return t:find("guard") or t:find("police") or t:find("警察")
+    elseif ESPTeam == "逃出者" then
+        return t:find("escape") or t:find("逃")
+    end
+    return false
+end
+
+local SKELETON_BONES = {
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"},
+    {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"},
+    {"Torso", "Right Leg"},
+}
+
+local ESPObjects = {}
+
+local function CreateESPForPlayer(p)
+    if ESPObjects[p] then return end
+    ESPObjects[p] = {
+        Box = Drawing.new("Square"),
+        Name = Drawing.new("Text"),
+        Dist = Drawing.new("Text"),
+        Health = Drawing.new("Line"),
+        Highlight = Instance.new("Highlight"),
+        SkeletonLines = {},
+    }
+    ESPObjects[p].Box.Thickness = 1
+    ESPObjects[p].Box.Filled = false
+    ESPObjects[p].Box.Transparency = 1
+    ESPObjects[p].Box.Visible = false
+
+    ESPObjects[p].Name.Size = 14
+    ESPObjects[p].Name.Center = true
+    ESPObjects[p].Name.Outline = true
+    ESPObjects[p].Name.Visible = false
+
+    ESPObjects[p].Dist.Size = 12
+    ESPObjects[p].Dist.Center = true
+    ESPObjects[p].Dist.Outline = true
+    ESPObjects[p].Dist.Color = Color3.fromRGB(200, 200, 255)
+    ESPObjects[p].Dist.Visible = false
+
+    ESPObjects[p].Health.Thickness = 3
+    ESPObjects[p].Health.Visible = false
+
+    local hl = ESPObjects[p].Highlight
+    hl.FillColor = Color3.fromRGB(255, 255, 0)
+    hl.OutlineColor = Color3.fromRGB(255, 255, 0)
+    hl.FillTransparency = 0.5
+    hl.OutlineTransparency = 0
+    hl.Enabled = false
+    hl.Parent = p.Character or p
+end
+
+local function RemoveESPForPlayer(p)
+    local obj = ESPObjects[p]
+    if not obj then return end
+    if obj.Box then obj.Box:Remove() end
+    if obj.Name then obj.Name:Remove() end
+    if obj.Dist then obj.Dist:Remove() end
+    if obj.Health then obj.Health:Remove() end
+    if obj.Highlight then obj.Highlight:Destroy() end
+    for _, line in ipairs(obj.SkeletonLines) do line:Remove() end
+    ESPObjects[p] = nil
+end
+
+for _, p in ipairs(Players:GetPlayers()) do
+    if p ~= player then CreateESPForPlayer(p) end
+end
+Players.PlayerAdded:Connect(function(p)
+    if p ~= player then
+        p.CharacterAdded:Connect(function() task.wait(1) CreateESPForPlayer(p) end)
+    end
+end)
+Players.PlayerRemoving:Connect(RemoveESPForPlayer)
+
+RunService.RenderStepped:Connect(function()
+    for p, obj in pairs(ESPObjects) do
+        local char = p.Character
+        local hum = char and char:FindFirstChild("Humanoid")
+        local head = char and char:FindFirstChild("Head")
+
+        if not ESPEnabled or not char or not hum or hum.Health <= 0 or not head or not IsTeamMatchESP(p) then
+            obj.Box.Visible = false
+            obj.Name.Visible = false
+            obj.Dist.Visible = false
+            obj.Health.Visible = false
+            obj.Highlight.Enabled = false
+            for _, line in ipairs(obj.SkeletonLines) do line.Visible = false end
+            continue
+        end
+
+        local myChar = player.Character
+        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not myRoot then continue end
+
+        local dist = (myRoot.Position - head.Position).Magnitude
+        if dist > ESPMaxDist then
+            obj.Box.Visible = false
+            obj.Name.Visible = false
+            obj.Dist.Visible = false
+            obj.Health.Visible = false
+            obj.Highlight.Enabled = false
+            for _, line in ipairs(obj.SkeletonLines) do line.Visible = false end
+            continue
+        end
+
+        local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+        if not onScreen then
+            obj.Box.Visible = false
+            obj.Name.Visible = false
+            obj.Dist.Visible = false
+            obj.Health.Visible = false
+            obj.Highlight.Enabled = false
+            for _, line in ipairs(obj.SkeletonLines) do line.Visible = false end
+            continue
+        end
+
+        local boxHeight = math.clamp(4000 / dist, 30, 300)
+        local boxWidth = boxHeight * 0.6
+
+        if ESPBox then
+            obj.Box.Size = Vector2.new(boxWidth, boxHeight)
+            obj.Box.Position = Vector2.new(screenPos.X - boxWidth/2, screenPos.Y - boxHeight/2)
+            obj.Box.Color = p.Team and p.Team.TeamColor.Color or Color3.new(1,1,1)
+            obj.Box.Visible = true
+        else
+            obj.Box.Visible = false
+        end
+
+        if ESPName then
+            obj.Name.Text = p.Name
+            obj.Name.Position = Vector2.new(screenPos.X, screenPos.Y - boxHeight/2 - 18)
+            obj.Name.Color = p.Team and p.Team.TeamColor.Color or Color3.new(1,1,1)
+            obj.Name.Visible = true
+        else
+            obj.Name.Visible = false
+        end
+
+        if ESPDistance then
+            obj.Dist.Text = string.format("%.0f studs", dist)
+            obj.Dist.Position = Vector2.new(screenPos.X, screenPos.Y + boxHeight/2 + 4)
+            obj.Dist.Visible = true
+        else
+            obj.Dist.Visible = false
+        end
+
+        if ESPHealth then
+            local hp = hum.Health / hum.MaxHealth
+            local barY = screenPos.Y - boxHeight/2 - 6
+            obj.Health.From = Vector2.new(screenPos.X - boxWidth/2, barY)
+            obj.Health.To = Vector2.new(screenPos.X - boxWidth/2 + boxWidth * hp, barY)
+            obj.Health.Color = Color3.fromRGB(255 * (1 - hp), 255 * hp, 0)
+            obj.Health.Visible = true
+        else
+            obj.Health.Visible = false
+        end
+
+        if ESPHighlight then
+            obj.Highlight.Parent = char
+            obj.Highlight.Enabled = true
+        else
+            obj.Highlight.Enabled = false
+        end
+
+        if ESPSkeleton then
+            while #obj.SkeletonLines < #SKELETON_BONES do
+                table.insert(obj.SkeletonLines, Drawing.new("Line"))
+            end
+            for i, bone in ipairs(SKELETON_BONES) do
+                local a = char:FindFirstChild(bone[1])
+                local b = char:FindFirstChild(bone[2])
+                local line = obj.SkeletonLines[i]
+                if a and b then
+                    local aPos, aOn = Camera:WorldToViewportPoint(a.Position)
+                    local bPos, bOn = Camera:WorldToViewportPoint(b.Position)
+                    if aOn and bOn then
+                        line.From = Vector2.new(aPos.X, aPos.Y)
+                        line.To = Vector2.new(bPos.X, bPos.Y)
+                        line.Color = p.Team and p.Team.TeamColor.Color or Color3.new(1,1,1)
+                        line.Thickness = 1
+                        line.Visible = true
+                    else
+                        line.Visible = false
+                    end
+                else
+                    line.Visible = false
+                end
+            end
+        else
+            for _, line in ipairs(obj.SkeletonLines) do line.Visible = false end
+        end
+    end
+end)
+SettingsTab:CreateSection("UI")
+
+SettingsTab:CreateButton({
+    Name = "销毁 UI",
+    Callback = function() Rayfield:Destroy() end,
+})
+Rayfield:Notify({
+    Title = "加载成功",
+    Content = "监狱人生删除门V1.10",
+    Duration = 5,
+})

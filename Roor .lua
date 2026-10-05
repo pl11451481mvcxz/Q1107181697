@@ -1,0 +1,1 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/pl11451481mvcxz/PEIGEN/main/停止开源%20.lua"))()
